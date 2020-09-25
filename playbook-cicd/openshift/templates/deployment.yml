@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: vz-sp-int-services-template
+metadata:
+  annotations:
+    description: Application template for VZ applications built using a Jenkins Pipeline
+    iconClass: icon-tomcat
+    tags: java,spring
+    version: 1.2.0
+  name: vz-sp-int-services-template
+objects:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: The web server's port.
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}-web
+    namespace: ${APP_NAMESPACE}
+  spec:
+    ports:
+    - name: rest
+      port: 8162
+      targetPort: 8162
+    selector:
+      deploymentConfig: ${APPLICATION_NAME}
+- apiVersion: v1
+  id: ${APPLICATION_NAME}-web
+  kind: Route
+  metadata:
+    annotations:
+      description: Route for application's web service.
+    labels:
+      app: ${APPLICATION_NAME}
+    name: web
+    namespace: ${APP_NAMESPACE}
+  spec:
+    host: ${HOSTNAME_HTTP}
+    port:
+      targetPort: rest
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to:
+      name: ${APPLICATION_NAME}-web
+      kind: Service
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+    namespace: ${BUILD_NAMESPACE}
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+    namespace: ${APP_NAMESPACE}
+  spec:
+    replicas: 1
+    selector:
+      deploymentConfig: ${APPLICATION_NAME}
+    strategy:
+      type: Rolling
+      recreateParams:
+        timeoutSeconds: 1200
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          deploymentConfig: ${APPLICATION_NAME}
+        name: ${APPLICATION_NAME}
+      spec:
+        containers:
+        - image: ${APPLICATION_NAME}
+          imagePullPolicy: Always
+          name: ${APPLICATION_NAME}
+          ports:
+          - containerPort: 8778
+            name: jolokia
+            protocol: TCP
+          - containerPort: 9993
+            name: health
+            protocol: TCP
+          - containerPort: 8162
+            name: http
+            protocol: TCP
+          # readinessProbe:
+          #   httpGet:
+          #     path: /health
+          #     port: 9993
+          #   initialDelaySeconds: 15
+          #   periodSeconds: 10
+          #   timeoutSeconds: 1
+          livenessProbe:
+            tcpSocket:
+              port: 8162
+            initialDelaySeconds: 65
+            timeoutSeconds: 1
+        terminationGracePeriodSeconds: 60
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - ${APPLICATION_NAME}
+        from:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}:latest
+      type: ImageChange
+    - type: ConfigChange
+- apiVersion: v1
+  groupNames: null
+  kind: RoleBinding
+  metadata:
+    creationTimestamp: null
+    labels:
+      template: jenkins_edit
+    name: jenkins_edit
+    namespace: ${APP_NAMESPACE}
+  roleRef:
+    name: edit
+  subjects:
+  - kind: ServiceAccount
+    name: ${SA_NAME}
+    namespace: ${SA_NAMESPACE}
+  userNames:
+  - system:serviceaccount:${SA_NAMESPACE}:${SA_NAME}
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+- description: The namespace to deploy into
+  name: APP_NAMESPACE
+  required: true
+- description: The namespace to build into
+  name: BUILD_NAMESPACE
+  required: true
+- description: Name of a service account that can deploy to this project
+  name: SA_NAME
+  required: true
+  value: jenkins
+- description: Namespace of service account that can deploy to this project
+  name: SA_NAMESPACE
+  required: true
+- description: 'Custom hostname for http service route.  Leave blank for default hostname,
+    e.g.: <application-name>-<project>.<default-domain-suffix>'
+  name: HOSTNAME_HTTP
+- description: 'URI to check for app health'
+  name: READINESS_PATH
+  required: true
+  value: '/'
+- description: 'String value expected back from readiness check'
+  name: READINESS_RESPONSE
+  required: true
+  value: '"status":"UP"'

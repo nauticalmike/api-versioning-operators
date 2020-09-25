@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: List
+items:
+- kind: ProjectRequest
+  apiVersion: v1
+  metadata:
+    name: api-operator-cicd
+    creationTimestamp: null
+  displayName: api-cicd
+- kind: ProjectRequest
+  apiVersion: v1
+  metadata:
+    name: api-versioning-service-operator-dev
+    creationTimestamp: null
+  displayName: api-dev
+- kind: ProjectRequest
+  apiVersion: v1
+  metadata:
+    name: api-versioning-service-operator-uat
+    creationTimestamp: null
+  displayName: api-uat
+- kind: ProjectRequest
+  apiVersion: v1
+  metadata:
+    name: api-versioning-service-operator-prod
+    creationTimestamp: null
+  displayName: api-prod

@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: generic-java-jenkins-pipeline
+metadata:
+  annotations:
+    description: Application template for FUSE applications built using Generic Middleware Pipeline
+    iconClass: icon-tomcat
+    tags: tomcat,tomcat8,java,jboss,xpaas,jenkins-ci
+    version: 1.2.0
+  name: generic-java-jenkins-pipeline
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+    namespace: ${BUILD_NAMESPACE}
+- kind: "BuildConfig"
+  apiVersion: "v1"
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: "${APPLICATION_NAME}-pipeline"
+    namespace: "${BUILD_NAMESPACE}"
+  spec:
+    source:
+      git:
+        uri: ${SOURCE_REPOSITORY_URL}
+        ref: ${SOURCE_REPOSITORY_REF}
+      contextDir: ${CONTEXT_DIR}
+      sourceSecret:
+        name: "gitlab-token"
+    triggers:
+    - type: "GitLab"
+      gitlab:
+        secretReference:
+          name: gitlab-token
+    - type: "ConfigChange"
+    strategy:
+      type: "JenkinsPipeline"
+      jenkinsPipelineStrategy:
+        jenkinsfilePath: ${PIPELINE_SCRIPT}
+        env:
+        - name: "APPLICATION_NAME"
+          value: "${APPLICATION_NAME}"
+        - name: "APP_NAMESPACE"
+          value: "${APP_NAMESPACE}"
+        - name: "APPLICATION_SOURCE_REPO"
+          value: "${APPLICATION_SOURCE_REPO}"
+        - name: "APPLICATION_SOURCE_REF"
+          value: "${APPLICATION_SOURCE_REF}"
+        - name: "BUILD_NAMESPACE"
+          value: "${BUILD_NAMESPACE}"
+        - name: NO_PROXY
+          value: "${NO_PROXY}"
+        - name: no_proxy
+          value: "${NO_PROXY}"
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+    namespace: "${BUILD_NAMESPACE}"
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${APPLICATION_NAME}:latest
+        namespace: ${BUILD_NAMESPACE}
+    source:
+      binary: {}
+      type: Binary
+    strategy:
+      sourceStrategy:
+        from:
+          kind: ImageStreamTag
+          name: ${IMAGE_STREAM_TAG_NAME}
+          namespace: ${IMAGE_STREAM_NAMESPACE}
+      type: Source
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: gitlab-token
+    namespace: "${BUILD_NAMESPACE}"
+    labels:
+      application: ${BUILD_NAMESPACE}
+  type: kubernetes.io/basic-auth
+  data:
+    username: ${GITLAB_TOKEN_USERNAME}
+    password: ${GITLAB_TOKEN}
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+- description: The namespace to deploy into
+  name: APP_NAMESPACE
+  required: true
+- description: The namespace to build into
+  name: BUILD_NAMESPACE
+  required: true
+- description: Git source URI for application
+  name: SOURCE_REPOSITORY_URL
+  required: true
+  value: https://gitlab.consulting.redhat.com/kjanania/api-versioning-operators.git
+- description: Git branch/tag reference
+  name: SOURCE_REPOSITORY_REF
+  value: "master"
+- description: Path within Git project to build; empty for root project directory.
+  name: CONTEXT_DIR
+  value: "playbook-cicd"
+- description: Source code repo for app
+  name: APPLICATION_SOURCE_REPO
+  required: true
+- description: Source code branch for app
+  name: APPLICATION_SOURCE_REF
+  value: master
+- description: Path within Git project pointing to the pipeline run script
+  name: PIPELINE_SCRIPT
+  value: Jenkinsfile
+- description: GitLab token
+  name: GITLAB_TOKEN
+  required: true
+- description: Gitlab token username
+  name: GITLAB_TOKEN_USERNAME
+  required: true
+- description: Namespace in which the ImageStreams for Red Hat Middleware images are
+    installed. These ImageStreams are normally installed in the openshift namespace.
+    You should only need to modify this if you've installed the ImageStreams in a
+    different namespace/project.
+  name: IMAGE_STREAM_NAMESPACE
+  required: true
+  value: openshift
+- description: Image stream tag for the image you'd like to use to build the application
+  name: IMAGE_STREAM_TAG_NAME
+  required: true
+  value: fuse7-java-openshift:1.2

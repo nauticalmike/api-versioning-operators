@@ -1,0 +1,2 @@
+[seed-hosts]
+api.cluster-nyc-3c57.nyc-3c57.example.opentlc.com ansible_connection=local

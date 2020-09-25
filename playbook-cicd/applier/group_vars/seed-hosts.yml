@@ -1,0 +1,178 @@
+# VARS--------------------------------------------------------------------------
+# Common
+gitlab_token: <CREATEONE>
+gitlab_token_username: <CREATEONE>
+readiness_path: "/health"
+readiness_response: 'status":"UP"'
+
+# CICD config:
+build_namespace: api-cicd
+sa_name: jenkins
+sa_namespace: api-cicd
+cicd_source_repository_url: "https://github.com/nauticalmike/api-versioning-operators.git"
+cicd_source_repository_ref: "master"
+
+# api-versioning-service
+application_name: api-versioning-service
+app_namespace_dev: api-dev
+app_namespace_uat: api-uat
+app_namespace_prod: api-prod
+application_source_repo: "https://github.com/nauticalmike/api-versioning-operators.git"
+branch: "master"
+
+# Apicast Routes
+dev_apicast_route: apicast-dev-api-dev.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com
+uat_apicast_route: apicast-uat-api-uat.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com
+prod_apicast_route: apicast-prod-api-prod.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com
+
+# 3scale
+# dev
+dev_service_name: api-versioning-service-dev
+dev_system_master_ns: 3scale-apimanager
+dev_tenant_secret: 562870a6fd3d192692c2400a023b8c5f
+dev_private_base_url: http://api-versioning-service-web.api-dev.svc.cluster.local:8162
+dev_public_base_url: https://apicast-dev-api-dev.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443
+dev_tenant_token_secret: tenant-dev
+dev_secret_ns: api-dev
+
+# uat
+uat_service_name: api-versioning-service-uat
+uat_system_master_ns: 3scale-apimanager
+uat_tenant_secret: 562870a6fd3d192692c2400a023b8c5f
+uat_private_base_url: http://api-versioning-service-web.api-uat.svc.cluster.local:8162
+uat_public_base_url: https://apicast-uat-api-uat.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443
+uat_tenant_token_secret: tenant-uat
+uat_secret_ns: api-uat
+
+# prod
+prod_service_name: api-versioning-service-prod
+prod_system_master_ns: 3scale-apimanager
+prod_tenant_secret: 562870a6fd3d192692c2400a023b8c5f
+prod_private_base_url: http://api-versioning-service-web.api-prod.svc.cluster.local:8162
+prod_public_base_url: https://apicast-prod-api-prod.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443
+prod_tenant_token_secret: tenant-prod
+prod_secret_ns: api-prod
+
+# ------------------------------------------------------------------------------
+# DO NOT MODIFY FROM HERE!
+
+openshift_cluster_content:
+# TODO: NAMESPACES CREATED BY OPERATOR SCRIPT
+# - object: projects
+#   content:
+#   - name: "create environments"
+#     file: "{{ inventory_dir }}/../openshift/projects/projects.yml"
+#     action: create
+#     tags:
+#       - project
+# TODO: there is a problem with the template, so doing "oc process openshift//jenkins-ephemeral | oc apply -f- -n api-cicd" manually
+# - object: jenkins-ephemeral
+#   content:
+#   - name: "jenkins-ephemeral"
+#     template: "{{ inventory_dir }}/../openshift/templates/jenkins-ephemeral.yml"
+#     namespace: "{{ build_namespace }}"
+#     tags:
+#       - jenkinsImage
+- object: rolebindings
+  content:
+  - name: "create Role Bindings"
+    template: "{{ inventory_dir }}/../openshift/templates/role-binding.yml"
+    params_from_vars:
+      APP_NAMESPACE: "{{ app_namespace_dev }}"
+      SA_NAME: "{{ sa_name }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+    tags:
+      - roleBinding
+  - name: "create Role Bindings"
+    template: "{{ inventory_dir }}/../openshift/templates/role-binding.yml"
+    params_from_vars:
+      APP_NAMESPACE: "{{ app_namespace_uat }}"
+      SA_NAME: "{{ sa_name }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+    tags:
+      - roleBinding
+  - name: "create Role Bindings"
+    template: "{{ inventory_dir }}/../openshift/templates/role-binding.yml"
+    params_from_vars:
+      APP_NAMESPACE: "{{ app_namespace_prod }}"
+      SA_NAME: "{{ sa_name }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+    tags:
+      - roleBinding
+- object: deployments
+  content:
+  - name: "deploy service dev environment"
+    template: "{{ inventory_dir }}/../openshift/templates/deployment.yml"
+    params_from_vars:
+      APPLICATION_NAME: "{{ application_name }}"
+      APP_NAMESPACE: "{{ app_namespace_dev }}"
+      BUILD_NAMESPACE: "{{ build_namespace }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+      READINESS_PATH: "{{ readiness_path }}"
+      READINESS_RESPONSE: "{{ readiness_response }}"
+    tags:
+      - deployment
+  - name: "deploy service uat environment"
+    template: "{{ inventory_dir }}/../openshift/templates/deployment.yml"
+    params_from_vars:
+      APPLICATION_NAME: "{{ application_name }}"
+      APP_NAMESPACE: "{{ app_namespace_uat }}"
+      BUILD_NAMESPACE: "{{ build_namespace }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+      READINESS_PATH: "{{ readiness_path }}"
+      READINESS_RESPONSE: "{{ readiness_response }}"
+    tags:
+      - deployment
+  - name: "deploy service prod environment"
+    template: "{{ inventory_dir }}/../openshift/templates/deployment.yml"
+    params_from_vars:
+      APPLICATION_NAME: "{{ application_name }}"
+      APP_NAMESPACE: "{{ app_namespace_prod }}"
+      BUILD_NAMESPACE: "{{ build_namespace }}"
+      SA_NAMESPACE: "{{ sa_namespace }}"
+      READINESS_PATH: "{{ readiness_path }}"
+      READINESS_RESPONSE: "{{ readiness_response }}"
+    tags:
+      - deployment
+- object: builds
+  content:
+  - name: "deploy service build pipeline to dev"
+    template: "{{ inventory_dir }}/../openshift/templates/build.yml"
+    params_from_vars:
+      APPLICATION_NAME: "{{ application_name }}"
+      APP_NAMESPACE: "{{ app_namespace_dev }}"
+      BUILD_NAMESPACE: "{{ build_namespace }}"
+      SOURCE_REPOSITORY_URL: "{{ cicd_source_repository_url }}"
+      SOURCE_REPOSITORY_REF: "{{ cicd_source_repository_ref }}"
+      GITLAB_TOKEN: "{{ gitlab_token }}"
+      GITLAB_TOKEN_USERNAME: "{{ gitlab_token_username }}"
+      APPLICATION_SOURCE_REPO: "{{ application_source_repo }}"
+      APPLICATION_SOURCE_REF: "{{ branch }}"
+    tags:
+      - build
+- object: apicast-routes
+  content:
+  - name: "deploy apicast-route dev"
+    template: "{{ inventory_dir }}/../openshift/templates/create-apicast-routes-template.yml"
+    environment: "api-dev"
+    params_from_vars:
+      HOSTNAME: "{{ dev_apicast_route }}"
+      ENV: "dev"
+    tags:
+      - apicast-routes
+  - name: "deploy apicast-route uat"
+    template: "{{ inventory_dir }}/../openshift/templates/create-apicast-routes-template.yml"
+    environment: "api-uat"
+    params_from_vars:
+      HOSTNAME: "{{ uat_apicast_route }}"
+      ENV: "uat"
+    tags:
+      - apicast-routes
+  - name: "deploy apicast-route prod"
+    template: "{{ inventory_dir }}/../openshift/templates/create-apicast-routes-template.yml"
+    environment: "api-prod"
+    params_from_vars:
+      HOSTNAME: "{{ prod_apicast_route }}"
+      ENV: "prod"
+    tags:
+      - apicast-routes

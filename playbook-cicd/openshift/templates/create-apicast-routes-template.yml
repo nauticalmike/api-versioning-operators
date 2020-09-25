@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: create-apicast-routes-template
+metadata:
+  annotations:
+    version: 1.2.0
+  name: create-apicast-routes-template
+objects:
+- apiVersion: v1
+  id: apicast-${ENV}
+  kind: Route
+  metadata:
+    name: apicast-${ENV}
+    namespace: api-${ENV}
+  labels:
+    app: 3scale-api-management
+    threescale_component: apicast
+    threescale_component_element: ${ENV}
+  spec:
+    host: ${HOSTNAME}
+    subdomain: ''
+    to:
+      kind: Service
+      name: apicast-${ENV}
+      weight: 100
+    port:
+      targetPort: gateway
+    tls:
+      insecureEdgeTerminationPolicy: Allow
+      termination: edge
+    wildcardPolicy: None
+parameters:
+- description: apicast route
+  name: HOSTNAME
+  required: true
+- description: environment
+  name: ENV
+  required: true

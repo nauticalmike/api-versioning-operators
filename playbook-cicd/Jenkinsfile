@@ -1,0 +1,223 @@
+openshift.withCluster() {
+  echo "Starting Generic Java Pipeline..."
+
+  env.NAMESPACE = openshift.project()
+  env.POM_FILE = env.BUILD_CONTEXT_DIR ? "${env.BUILD_CONTEXT_DIR}/pom.xml" : "pom.xml"
+  env.APP_NAME = "${APPLICATION_NAME}"
+  echo "Starting Pipeline for ${APP_NAME}..."
+  echo ">>>${APP_NAME} directory: ${APP_DIR}"
+  env.BUILD = "${BUILD_NAMESPACE}"
+  env.TOKEN = ""
+  echo "BUILDER NAMESPACE: ${BUILD_NAMESPACE}"
+  env.DEV = "${APP_NAME}-dev"
+  env.UAT = "${APP_NAME}-uat"
+  env.PROD = "${APP_NAME}-prod"
+  env.APP_NAMESPACE = "${APP_NAMESPACE}".replaceAll("-dev", '')
+
+  env.dev_privateBaseURL = "http://api-versioning-service-web.api-dev.svc.cluster.local:8162"
+  env.dev_publicBaseURL = "https://apicast-dev-api-dev.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443"
+  env.dev_testUserKey = "c577fdbdbc1ba28fac8fe590c56f9419"
+
+  env.uat_privateBaseURL = "http://api-versioning-service-web.api-uat.svc.cluster.local:8162"
+  env.uat_publicBaseURL = "https://apicast-uat-api-uat.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443"
+  env.uat_testUserKey = "19700ec770dcf4b65364d535292d7a6e"
+
+  env.prod_privateBaseURL = "http://api-versioning-service-web.api-prod.svc.cluster.local:8162"
+  env.prod_publicBaseURL = "https://apicast-prod-api-prod.apps.cluster-nyc-3c57.nyc-3c57.example.opentlc.com:443"
+  env.prod_testUserKey = "619af2f1f136fad920c708577109a02f"
+}
+
+pipeline {
+  // Use Jenkins Maven slave
+  // Jenkins will dynamically provision this as OpenShift Pod
+  // All the stages and steps of this Pipeline will be executed on this Pod
+  // After Pipeline completes the Pod is killed so every run will have clean
+  // workspace
+  agent {
+    label 'maven'
+  }
+
+  // Pipeline Stages start here
+  // Requires at least one stage
+  stages {
+
+    // Checkout source code
+    stage('Git Checkout Service') {
+      steps {
+
+        // Turn off Git's SSL cert check, uncomment if needed
+        // sh 'git config --global http.sslVerify false'
+        //echo ">>> git url ${APPLICATION_SOURCE_REPO}"
+        //echo ">>> branch ${APPLICATION_SOURCE_REF}"
+        //echo ">>> Checking out ${APPLICATION_SOURCE_REPO}"
+        git url: "${APPLICATION_SOURCE_REPO}", branch: "${APPLICATION_SOURCE_REF}", credentialsId: "${BUILD_NAMESPACE}-gitlab-token"
+
+      }
+    }
+
+    // Run Maven build, skipping tests
+    stage('Build Service'){
+      steps {
+        sh "ls -latr"
+        sh "mvn -B -s ${APPLICATION_NAME}/config/settings.xml clean install -DskipTests=true -f ${APPLICATION_NAME}/pom.xml"
+
+      }
+    }
+
+    // Build Container Image using the artifacts produced in previous stages
+    stage('Build Container Image') {
+      steps {
+
+        // Copy the service jar into common directory
+        sh """
+          ls ${APP_DIR}/target/*
+          rm -rf oc-build && mkdir -p oc-build/deployments
+          cp ${APP_DIR}/target/*.jar oc-build/deployments
+          ls oc-build/deployments
+        """
+
+      //builds the image
+      script {
+        openshift.withCluster() {
+          openshift.withProject('${BUILD_NAMESPACE}') {
+            //echo "Using project: ${openshift.project()}"
+            echo "Using app: $env.APP_NAME"
+            //env.TOKEN = sh(script:'oc sa get-token jenkins',,returnStdout:true)
+            //echo "Token: $env.TOKEN"
+            openshift.selector('bc', '${APPLICATION_NAME}').startBuild('--from-dir=oc-build', '--wait=true').logs('-f')
+            }
+          }
+        }
+      }
+    }
+
+    stage('Promote from Build to dev') {
+      steps {
+        script {
+          openshift.withCluster() {
+            openshift.withProject('${BUILD_NAMESPACE}') {
+              openshift.tag("${BUILD_NAMESPACE}/${APPLICATION_NAME}:latest", "${APP_NAMESPACE}-dev/${APPLICATION_NAME}:latest")
+            }
+          }
+        }
+      }
+    }
+
+    stage('Configure dev 3scale tenant') {
+      steps {
+        // sh "oc delete -f openshift/templates/create-api.yaml --ignore-not-found=true"
+        // sh "pwd"
+        // sh "ls -altr"
+        //create api product on 3scale apimanager
+        sh "oc process -f /tmp/workspace/api-cicd/api-cicd-api-versioning-service-pipeline/playbook-cicd/openshift/templates/create-api.yml -p=SERVICE_NAME=api-versioning-service-dev${BUILD_NUMBER} -p=SYSTEM_MASTER_NAMESPACE=api-dev -p=SECRET_TOKEN=7000da17bb430c5dee5e1836050bc05d -p=PRIVATE_BASE_URL=${dev_privateBaseURL} -p=PUBLIC_BASE_URL=${dev_publicBaseURL} -p=TENANT_TOKEN_SECRET=tenant-dev -p=SECRET_NAMESPACE=api-dev | oc apply --wait -f -"
+      }
+    }
+
+    stage('test dev service through apicast') {
+      steps {
+        script {
+          // wait for secret
+          sh "until oc get secret -n api-dev user-key-api-versioning-service-dev${BUILD_NUMBER}-binding; do sleep 5; done"
+          dev_testUserKeyJSONString = sh(script: "oc get secret -n 3scale-apimanager user-key-api-versioning-service-dev${BUILD_NUMBER}-binding -o json", returnStdout: true)
+          dev_testUserKeyJSON = readJSON text: dev_testUserKeyJSONString
+          byte[] decoded = dev_testUserKeyJSON['data']['user-key'].decodeBase64()
+          dev_testUserKey = new String(decoded)
+          // wait for curl 200 response code
+          sh "while [[ \"\$(curl -s -o /dev/null -w ''%{http_code}'' ${dev_publicBaseURL}/person/v1.0/1 -H 'user-key: ${dev_testUserKey}' -k)\" != \"200\" ]]; do sleep 5; done"
+        }
+      }
+    }
+
+    stage('Promotion gate to uat') {
+      steps {
+        script {
+          timeout(time: 30, unit: 'MINUTES') {
+            input message: 'Promote application to uat?'
+          }
+        }
+      }
+    }
+
+    stage('Promote from dev to uat') {
+      steps {
+        script {
+          openshift.withCluster() {
+            openshift.withProject('${BUILD_NAMESPACE}') {
+              openshift.tag("${APP_NAMESPACE}-dev/${APPLICATION_NAME}:latest", "${APP_NAMESPACE}-uat/${APPLICATION_NAME}:latest")
+            }
+          }
+        }
+      }
+    }
+
+    stage('Configure uat 3scale tenant') {
+      steps {
+        // sh "oc delete -f openshift/templates/create-api.yaml --ignore-not-found=true"
+        //create api product on 3scale apimanager
+        sh "oc process -f /tmp/workspace/api-cicd/api-cicd-api-versioning-service-pipeline/playbook-cicd/openshift/templates/create-api.yml -p=SERVICE_NAME=api-versioning-service-uat${BUILD_NUMBER} -p=SYSTEM_MASTER_NAMESPACE=api-uat -p=SECRET_TOKEN=0d5a64e13e19c21c546476db992d23b6 -p=PRIVATE_BASE_URL=${uat_privateBaseURL} -p=PUBLIC_BASE_URL=${uat_publicBaseURL} -p=TENANT_TOKEN_SECRET=tenant-uat -p=SECRET_NAMESPACE=api-uat | oc apply --wait -f -"
+      }
+    }
+
+    stage('test uat service through apicast') {
+      steps {
+        script {
+          // wait for secret
+          sh "until oc get secret -n api-uat user-key-api-versioning-service-uat${BUILD_NUMBER}-binding; do sleep 5; done"
+          uat_testUserKeyJSONString = sh(script: "oc get secret -n 3scale-apimanager user-key-api-versioning-service-uat${BUILD_NUMBER}-binding -o json", returnStdout: true)
+          uat_testUserKeyJSON = readJSON text: uat_testUserKeyJSONString
+          byte[] decoded = uat_testUserKeyJSON['data']['user-key'].decodeBase64()
+          uat_testUserKey = new String(decoded)
+          // wait for curl 200 response code
+          sh "while [[ \"\$(curl -s -o /dev/null -w ''%{http_code}'' ${uat_publicBaseURL}/person/v1.0/1 -H 'user-key: ${uat_testUserKey}' -k)\" != \"200\" ]]; do sleep 5; done"
+        }
+      }
+    }
+
+    stage('Promotion gate to prod') {
+      steps {
+        script {
+          timeout(time: 30, unit: 'MINUTES') {
+            input message: 'Promote application to prod?'
+          }
+        }
+      }
+    }
+
+    stage('Promote from uat to prod') {
+      steps {
+        script {
+
+          openshift.withCluster() {
+            openshift.withProject('${BUILD_NAMESPACE}') {
+              openshift.tag("${APP_NAMESPACE}-uat/${APPLICATION_NAME}:latest", "${APP_NAMESPACE}-prod/${APPLICATION_NAME}:latest")
+            }
+          }
+        }
+      }
+    }
+
+    stage('Configure prod 3scale tenant') {
+      steps {
+        // sh "oc delete -f openshift/templates/create-api.yaml --ignore-not-found=true"
+        //create api product on 3scale apimanager
+        sh "oc process -f /tmp/workspace/api-cicd/api-cicd-api-versioning-service-pipeline/playbook-cicd/openshift/templates/create-api.yml -p=SERVICE_NAME=api-versioning-service-prod${BUILD_NUMBER} -p=SYSTEM_MASTER_NAMESPACE=api-prod -p=SECRET_TOKEN=384d877135df92a848ebafd2c1b68f7f -p=PRIVATE_BASE_URL=${prod_privateBaseURL} -p=PUBLIC_BASE_URL=${prod_publicBaseURL} -p=TENANT_TOKEN_SECRET=tenant-prod -p=SECRET_NAMESPACE=api-prod | oc apply --wait -f -"
+      }
+    }
+
+    stage('test prod service through apicast') {
+      steps {
+        script {
+          // wait for secret
+          sh "until oc get secret -n api-prod user-key-api-versioning-service-prod${BUILD_NUMBER}-binding; do sleep 5; done"
+          prod_testUserKeyJSONString = sh(script: "oc get secret -n 3scale-apimanager user-key-api-versioning-service-prod${BUILD_NUMBER}-binding -o json", returnStdout: true)
+          prod_testUserKeyJSON = readJSON text: prod_testUserKeyJSONString
+          byte[] decoded = prod_testUserKeyJSON['data']['user-key'].decodeBase64()
+          prod_testUserKey = new String(decoded)
+          // wait for curl 200 response code
+          sh "while [[ \"\$(curl -s -o /dev/null -w ''%{http_code}'' ${prod_publicBaseURL}/person/v1.0/1 -H 'user-key: ${prod_testUserKey}' -k)\" != \"200\" ]]; do sleep 5; done"
+        }
+      }
+    }
+
+  }
+}

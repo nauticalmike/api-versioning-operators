@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: 3scale-toolbox-image
+spec:
+  containers:
+  - name: web
+    image: registry.redhat.io/3scale-amp2/toolbox-rhel7
+  imagePullSecrets:
+  - name: redhat-registry

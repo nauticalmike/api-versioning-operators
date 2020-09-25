@@ -1,0 +1,13 @@
+server:
+  port: 8162
+
+management:
+  security:
+    enabled: false
+  endpoints:
+    web:
+      exposure:
+        include: "hawtio, jolokia, httptrace"
+  endpoint:
+    httptrace:
+      enabled: true
